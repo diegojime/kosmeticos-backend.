@@ -29,7 +29,7 @@ COLUMNAS_OBLIGATORIAS_MAIN = [
 # Configuración de carpetas
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_DIR = os.path.join(BASE_DIR, "base_de_datos")
-WEB_DIR = os.path.join(BASE_DIR, "web")
+WEB_DIR = os.path.join(BASE_DIR, "WEB")
 PLANTILLAS_DIR = os.path.join(BASE_DIR, "Plantillas")
 DICCIONARIOS_DIR = os.path.join(BASE_DIR, "diccionarios")
 
