@@ -47,7 +47,7 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
-# ENDPOINT DE LOGIN (AGREGADO PARA LA NUBE)
+# ENDPOINT DE LOGIN
 # ---------------------------------------------------------
 @app.post("/api/auth/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -657,7 +657,6 @@ async def procesar_tienda(tienda_id: str, archivo: str):
 
     return FileResponse(path=ruta_salida, filename=os.path.basename(ruta_salida))
 
-
 # ---------------------------------------------------------
 # ALIAS /export/<canal>
 # ---------------------------------------------------------
@@ -669,9 +668,9 @@ TIENDA_ID_POR_CANAL = {
 }
 
 for _canal, _tienda_id in TIENDA_ID_POR_CANAL.items():
-    def _make_export(tienda_id):
+    def _make_export(t_id):
         async def _export(archivo: str):
-            return await procesar_tienda(tienda_id, archivo)
+            return await procesar_tienda(t_id, archivo)
         return _export
 
     _handler = _make_export(_tienda_id)
@@ -683,4 +682,4 @@ for _canal, _tienda_id in TIENDA_ID_POR_CANAL.items():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("kosmeticos_backend_api:app", host="0.0.0.0", port=port, reload=False)
