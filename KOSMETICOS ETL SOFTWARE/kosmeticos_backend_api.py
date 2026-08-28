@@ -14,15 +14,16 @@ import uvicorn
 from jose import JWTError, jwt
 
 # ---------------------------------------------------------
-# RUTA BASE Y CARPETAS (DECLARAR ANTES DE INICIALIZAR LA APP)
+# RUTAS BASE Y CARPETAS
 # ---------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_DIR = os.path.join(BASE_DIR, "base_de_datos")
 WEB_DIR = os.path.join(BASE_DIR, "WEB")
 PLANTILLAS_DIR = os.path.join(BASE_DIR, "Plantillas")
 DICCIONARIOS_DIR = os.path.join(BASE_DIR, "diccionarios")
+PROCESADOS_DIR = os.path.join(BASE_DIR, "procesados")
 
-for folder in [DB_DIR, WEB_DIR, PLANTILLAS_DIR, DICCIONARIOS_DIR]:
+for folder in [DB_DIR, WEB_DIR, PLANTILLAS_DIR, DICCIONARIOS_DIR, PROCESADOS_DIR]:
     os.makedirs(folder, exist_ok=True)
 
 # Inicializar FastAPI
@@ -74,16 +75,15 @@ async def obtener_usuario_actual(token: str = Depends(oauth2_scheme)):
     return username
 
 # ---------------------------------------------------------
-# RUTAS DE FRONTEND (DEFINIDAS EXPLÍCITAMENTE)
+# RUTAS DE FRONTEND
 # ---------------------------------------------------------
-
 @app.get("/", response_class=HTMLResponse)
 @app.get("/login", response_class=HTMLResponse)
 async def serve_login():
     login_path = os.path.join(WEB_DIR, "login.html")
     if os.path.exists(login_path):
         return FileResponse(login_path)
-    return HTMLResponse(content="<h2>Error: El archivo login.html no existe en la carpeta WEB en Render. Verifique el repositorio.</h2>", status_code=404)
+    return HTMLResponse(content="<h2>Error: El archivo login.html no existe en la carpeta WEB.</h2>", status_code=404)
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def serve_dashboard():
@@ -92,12 +92,11 @@ async def serve_dashboard():
         return FileResponse(dashboard_path)
     return HTMLResponse(content="<h2>Error: El archivo index.html no existe en la carpeta WEB.</h2>", status_code=404)
 
-# Montar estáticos al final para no interferir con las rutas raíz
 if os.path.exists(WEB_DIR):
     app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 # ---------------------------------------------------------
-# ENDPOINTS API (LOGIN Y SERVICIOS)
+# ENDPOINTS DE AUTENTICACIÓN
 # ---------------------------------------------------------
 @app.post("/api/auth/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -119,13 +118,45 @@ async def read_users_me(current_user: str = Depends(obtener_usuario_actual)):
     return {"username": current_user, "status": "authenticated"}
 
 # ---------------------------------------------------------
-# PROCESAMIENTO Y DICCIONARIOS
+# ENDPOINTS DE DESCARGA DE PLANTILLAS Y ARCHIVOS
 # ---------------------------------------------------------
-COLUMNAS_OBLIGATORIAS_MAIN = [
-    "SKU_Padre", "SKU_Variante", "Marca", "Nombre_General",
-    "Titulo_MercadoLibre", "Precio_Regular", "Stock",
-]
+@app.get("/api/plantillas/lista")
+async def listar_plantillas():
+    if not os.path.exists(PLANTILLAS_DIR):
+        return []
+    archivos = [f for f in os.listdir(PLANTILLAS_DIR) if f.endswith(('.xlsx', '.csv')) and not f.startswith('~')]
+    return archivos
 
+@app.get("/api/plantillas/descargar/{nombre_archivo}")
+async def descargar_plantilla(nombre_archivo: str):
+    # Seguridad contra Directory Traversal
+    archivo_clean = os.path.basename(nombre_archivo)
+    path_archivo = os.path.join(PLANTILLAS_DIR, archivo_clean)
+    
+    if os.path.exists(path_archivo):
+        return FileResponse(
+            path=path_archivo, 
+            filename=archivo_clean,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    raise HTTPException(status_code=404, detail=f"La plantilla '{archivo_clean}' no se encuentra en el servidor. Verifica la carpeta Plantillas.")
+
+@app.get("/api/descargar/procesado/{nombre_archivo}")
+async def descargar_procesado(nombre_archivo: str):
+    archivo_clean = os.path.basename(nombre_archivo)
+    path_archivo = os.path.join(PROCESADOS_DIR, archivo_clean)
+    
+    if os.path.exists(path_archivo):
+        return FileResponse(
+            path=path_archivo, 
+            filename=archivo_clean,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    raise HTTPException(status_code=404, detail="El archivo procesado solicitado no se encuentra disponible.")
+
+# ---------------------------------------------------------
+# LÓGICA DE PROCESAMIENTO ETL Y DICCIONARIOS
+# ---------------------------------------------------------
 def _normalizar_header(valor):
     if valor is None:
         return ""
@@ -167,6 +198,8 @@ def _leer_un_diccionario(path):
     return pd.DataFrame(filas)
 
 def obtener_datos_consolidados_diccionarios():
+    if not os.path.exists(DICCIONARIOS_DIR):
+        return pd.DataFrame()
     archivos = [f for f in os.listdir(DICCIONARIOS_DIR) if f.endswith(('.xlsx', '.xls')) and not f.startswith('~')]
     if not archivos:
         return pd.DataFrame()
@@ -184,31 +217,39 @@ def obtener_datos_consolidados_diccionarios():
     diccionario_maestro = pd.concat(dfs, ignore_index=True)
     return diccionario_maestro.drop_duplicates(subset=['SKU'], keep='last')
 
-def cruzar_main_con_diccionario(df_main):
-    df_diccionario = obtener_datos_consolidados_diccionarios()
-    if 'SKU_Variante' in df_main.columns:
-        df_main['SKU_Variante'] = df_main['SKU_Variante'].astype(str).str.strip()
-    if df_diccionario.empty:
-        df_cruzado = df_main.copy()
-    else:
-        df_cruzado = pd.merge(df_main, df_diccionario, left_on='SKU_Variante', right_on='SKU', how='left')
+# Endpoint para subir y procesar archivos
+@app.post("/api/procesar")
+async def procesar_archivo(file: UploadFile = File(...), current_user: str = Depends(obtener_usuario_actual)):
+    try:
+        df_input = pd.read_excel(file.file)
+        df_diccionario = obtener_datos_consolidados_diccionarios()
+        
+        if 'SKU_Variante' in df_input.columns:
+            df_input['SKU_Variante'] = df_input['SKU_Variante'].astype(str).str.strip()
+            
+        if not df_diccionario.empty and 'SKU' in df_diccionario.columns:
+            df_resultado = pd.merge(df_input, df_diccionario, left_on='SKU_Variante', right_on='SKU', how='left')
+        else:
+            df_resultado = df_input.copy()
 
-    if 'Precio_Estipulado' in df_cruzado.columns:
-        df_cruzado['Precio_Base_Final'] = df_cruzado['Precio_Estipulado'].combine_first(df_cruzado.get('Precio_Regular'))
-    else:
-        df_cruzado['Precio_Base_Final'] = df_cruzado.get('Precio_Regular')
-
-    if 'Precio_Web' in df_cruzado.columns:
-        df_cruzado['Precio_Oferta_Final'] = df_cruzado['Precio_Web'].combine_first(df_cruzado.get('Precio_Oferta'))
-    else:
-        df_cruzado['Precio_Oferta_Final'] = df_cruzado.get('Precio_Oferta')
-
-    return df_cruzado
+        output_filename = f"procesado_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+        output_path = os.path.join(PROCESADOS_DIR, output_filename)
+        
+        df_resultado.to_excel(output_path, index=False)
+        
+        return {
+            "status": "ok",
+            "mensaje": "Archivo procesado exitosamente",
+            "download_url": f"/api/descargar/procesado/{output_filename}",
+            "filas_procesadas": len(df_resultado)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al procesar el archivo: {str(e)}")
 
 # ---------------------------------------------------------
 # INICIO DE SERVIDOR
 # ---------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    module_name = os.path.splitext(os.path.basename(__file__))[0]
+    module_name = os.path.splitext(os.path.basename(__file__))
     uvicorn.run(f"{module_name}:app", host="0.0.0.0", port=port, reload=False)
