@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kosmeticos ETL - Iniciar Sesión</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: #f4f6f9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .login-card {
+            background: #ffffff;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .login-card img {
+            max-width: 160px;
+            height: auto;
+            margin-bottom: 15px;
+        }
+
+        .login-card h2 {
+            color: #1f2937;
+            font-size: 22px;
+            margin-bottom: 6px;
+        }
+
+        .login-card p.subtitle {
+            color: #6b7280;
+            font-size: 14px;
+            margin-bottom: 25px;
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+            text-align: left;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            color: #374151;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        input:focus {
+            border-color: #2b579a;
+            box-shadow: 0 0 0 3px rgba(43, 87, 154, 0.15);
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #2b579a;
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            background-color: #1e3d6b;
+        }
+
+        .error-msg {
+            color: #991b1b;
+            background-color: #fee2e2;
+            border: 1px solid #fecaca;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-top: 15px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+<div class="login-card">
+    <!-- Muestra el logo de la empresa -->
+    <img src="/static/kosmeticos_logo.png" alt="Kosmeticos Logo" onerror="this.style.display='none'">
+    
+    <h2>Kosmeticos ETL</h2>
+    <p class="subtitle">Accede al panel de automatización</p>
+    
+    <form id="loginForm">
+        <div class="form-group">
+            <label for="username">Usuario</label>
+            <input type="text" id="username" required placeholder="Ej: marketing o devweb" autocomplete="username">
+        </div>
+        <div class="form-group">
+            <label for="password">Contraseña</label>
+            <input type="password" id="password" required placeholder="••••••••" autocomplete="current-password">
+        </div>
+        <button type="submit" id="btnIngresar">Ingresar</button>
+        <div id="errorMsg" class="error-msg">Usuario o contraseña incorrectos</div>
+    </form>
+</div>
+
+<script>
+document.getElementById('loginForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const errorMsg = document.getElementById('errorMsg');
+    const btn = document.getElementById('btnIngresar');
+    
+    errorMsg.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Verificando...';
+
+    const formData = new URLSearchParams();
+    formData.append('username', document.getElementById('username').value.trim());
+    formData.append('password', document.getElementById('password').value.trim());
+
+    try {
+        const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: formData
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            // Guarda el token de acceso en el navegador
+            localStorage.setItem('token', data.access_token);
+            // Redirige al panel principal
+            window.location.href = '/';
+        } else {
+            errorMsg.textContent = 'Usuario o contraseña incorrectos';
+            errorMsg.style.display = 'block';
+        }
+    } catch (err) {
+        errorMsg.textContent = 'Error al conectar con el servidor';
+        errorMsg.style.display = 'block';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Ingresar';
+    }
+});
+</script>
+
+</body>
+</html>

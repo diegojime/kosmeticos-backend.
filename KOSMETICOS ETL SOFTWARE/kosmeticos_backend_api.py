@@ -2,7 +2,7 @@ import os
 import re
 import random
 import shutil
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta, datetime, timezone
 import pandas as pd
 from openpyxl import load_workbook
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status
@@ -14,11 +14,10 @@ import uvicorn
 from jose import JWTError, jwt
 
 # ---------------------------------------------------------
-# AUTENTICACIÓN Y CREDENCIALES (AGREGADO PARA LA NUBE)
+# AUTENTICACIÓN Y CREDENCIALES (USUARIO ÚNICO DE EQUIPO)
 # ---------------------------------------------------------
 USER_CREDENTIALS = {
-    "marketing": "kosmeticos2026",  # Usuario/Clave Equipo 1
-    "devweb": "kosmeticos2026"     # Usuario/Clave Equipo 2
+    "kosmeticos": "kosmeticos2026"  # Credencial única para todo el equipo
 }
 
 # Configuración JWT
@@ -32,9 +31,9 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 def crear_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -87,7 +86,10 @@ app.add_middleware(
 # ---------------------------------------------------------
 @app.post("/api/auth/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    # 1. Obtener clave registrada para el usuario en texto plano
     user_password = USER_CREDENTIALS.get(form_data.username)
+    
+    # 2. Validación directa contra el diccionario (sin hashing passlib/bcrypt)
     if not user_password or user_password != form_data.password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -95,6 +97,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # 3. Generar JWT token tras la autenticación exitosa
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = crear_access_token(
         data={"sub": form_data.username}, expires_delta=access_token_expires
@@ -228,7 +231,7 @@ async def serve_frontend():
     if os.path.exists(index_path):
         with open(index_path, "r", encoding="utf-8") as f:
             return f.read()
-    return "<h1>El archivo index.html no se encuentra en la carpeta /web</h1>"
+    return "<h1>El archivo index.html no se encuentra en la carpeta /WEB</h1>"
 
 
 @app.get("/api/marketing/download-template/")
@@ -734,8 +737,9 @@ for _canal, _tienda_id in TIENDA_ID_POR_CANAL.items():
     app.post(f"/export/{_canal}")(_handler)
 
 # ---------------------------------------------------------
-# EJECUCIÓN (Ajustado para puerto de servidor Cloud)
+# EJECUCIÓN
 # ---------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("kosmeticos_backend_api:app", host="0.0.0.0", port=port, reload=False)
+    module_name = os.path.splitext(os.path.basename(__file__))[0]
+    uvicorn.run(f"{module_name}:app", host="0.0.0.0", port=port, reload=False)
