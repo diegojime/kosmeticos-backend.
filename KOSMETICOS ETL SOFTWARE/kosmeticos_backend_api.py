@@ -3,24 +3,17 @@ import re
 import random
 import shutil
 from datetime import date, timedelta
+import webbrowser
 import pandas as pd
 from openpyxl import load_workbook
-from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status
+from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import uvicorn
 
-# ---------------------------------------------------------
-# AUTENTICACIÓN Y CREDENCIALES (AGREGADO PARA LA NUBE)
-# ---------------------------------------------------------
-USER_CREDENTIALS = {
-    "marketing": "kosmeticos2026",  # Usuario/Clave Equipo 1
-    "devweb": "kosmeticos2026"     # Usuario/Clave Equipo 2
-}
-
-# Columnas mínimas que la Plantilla Madre debe traer
+# Columnas mínimas que la Plantilla Madre debe traer para poder procesar
+# cualquier canal. Si faltan, se rechaza el archivo antes de guardarlo.
 COLUMNAS_OBLIGATORIAS_MAIN = [
     "SKU_Padre", "SKU_Variante", "Marca", "Nombre_General",
     "Titulo_MercadoLibre", "Precio_Regular", "Stock",
@@ -29,40 +22,32 @@ COLUMNAS_OBLIGATORIAS_MAIN = [
 # Configuración de carpetas
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_DIR = os.path.join(BASE_DIR, "base_de_datos")
-WEB_DIR = os.path.join(BASE_DIR, "WEB")
+WEB_DIR = os.path.join(BASE_DIR, "web")
 PLANTILLAS_DIR = os.path.join(BASE_DIR, "Plantillas")
 DICCIONARIOS_DIR = os.path.join(BASE_DIR, "diccionarios")
 
 for folder in [DB_DIR, WEB_DIR, PLANTILLAS_DIR, DICCIONARIOS_DIR]:
     os.makedirs(folder, exist_ok=True)
 
-app = FastAPI(title="Kosmeticos ETL API - Nube")
+app = FastAPI(title="Kosmeticos ETL API")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ---------------------------------------------------------
-# ENDPOINT DE LOGIN
-# ---------------------------------------------------------
-@app.post("/api/auth/login")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user_password = USER_CREDENTIALS.get(form_data.username)
-    if not user_password or user_password != form_data.password:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Usuario o contraseña incorrectos",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return {"access_token": form_data.username, "token_type": "bearer"}
-
-# ---------------------------------------------------------
 # DICCIONARIO DE PRECIOS
 # ---------------------------------------------------------
+# La plantilla que sube la persona encargada trae, además del SKU, dos
+# columnas de precio clave (los nombres reales traen saltos de línea, por
+# eso se normalizan antes de compararlos):
+#   - "WEB PRICE"                                -> precio con descuento
+#   - "FALABELLA PARIS RIPLEY MERCADO LIBRE"        -> precio estipulado/normal
+# Solo se vincula por SKU: si un SKU del diccionario no existe en la
+# Plantilla Madre, esa fila simplemente no se usa (no se crea producto nuevo).
 
 def _normalizar_header(valor):
     if valor is None:
@@ -71,6 +56,9 @@ def _normalizar_header(valor):
 
 
 def _leer_un_diccionario(path):
+    """Lee un Excel de diccionario de precios y lo normaliza a las columnas
+    SKU / ISP / Precio_Web / Precio_Estipulado, sin importar en qué fila
+    esté el encabezado real (se busca la fila que contenga 'SKU')."""
     wb = load_workbook(path, data_only=True)
     ws = wb.worksheets[0]
 
@@ -141,6 +129,9 @@ def cruzar_main_con_diccionario(df_main):
     if df_diccionario.empty:
         df_cruzado = df_main.copy()
     else:
+        # how='left' asegura que solo se agregan datos a los SKU que YA
+        # existen en la Plantilla Madre; SKU del diccionario sin coincidencia
+        # se descartan solos.
         df_cruzado = pd.merge(
             df_main,
             df_diccionario,
@@ -149,6 +140,9 @@ def cruzar_main_con_diccionario(df_main):
             how='left'
         )
 
+    # Precio base a usar en cada canal: si el diccionario trajo un precio
+    # para ese SKU se usa ese; si no, se cae al precio propio de la Plantilla
+    # Madre para no dejar el producto sin precio.
     if 'Precio_Estipulado' in df_cruzado.columns:
         df_cruzado['Precio_Base_Final'] = df_cruzado['Precio_Estipulado'].combine_first(
             df_cruzado.get('Precio_Regular')
@@ -167,23 +161,22 @@ def cruzar_main_con_diccionario(df_main):
 
 
 def _rango_fecha_oferta_aleatorio():
+    """Genera una fecha de inicio/fin de oferta al azar (la misma para todo
+    el catálogo que se está generando en esta descarga)."""
     inicio = date.today() + timedelta(days=random.randint(0, 3))
     fin = inicio + timedelta(days=random.randint(60, 120))
     return inicio.isoformat(), fin.isoformat()
 
 # ---------------------------------------------------------
-# RUTAS DEL FRONTEND Y ARCHIVOS
+# RUTAS DEL FRONTEND
 # ---------------------------------------------------------
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_frontend():
     index_path = os.path.join(WEB_DIR, "index.html")
-    if os.path.exists(index_path):
-        with open(index_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h1>El archivo index.html no se encuentra en la carpeta /web</h1>"
-
+    with open(index_path, "r", encoding="utf-8") as f:
+        return f.read()
 
 @app.get("/api/marketing/download-template/")
 async def download_template():
@@ -192,7 +185,6 @@ async def download_template():
     if not os.path.exists(file_path):
         return {"error": "Plantilla no encontrada"}
     return FileResponse(path=file_path, filename=nombre_archivo)
-
 
 @app.post("/api/marketing/upload-excel/")
 async def upload_main_excel(archivo: UploadFile = File(...)):
@@ -206,12 +198,12 @@ async def upload_main_excel(archivo: UploadFile = File(...)):
     with open(file_location, "wb+") as file_object:
         shutil.copyfileobj(archivo.file, file_object)
 
+    # --- Validación: el archivo debe respetar la estructura de la Plantilla Madre ---
     try:
         df = pd.read_excel(file_location, sheet_name=0)
         df.columns = df.columns.str.strip()
     except Exception as e:
-        if os.path.exists(file_location):
-            os.remove(file_location)
+        os.remove(file_location)
         return JSONResponse(
             status_code=400,
             content={"error": f"No se pudo leer el Excel: {e}"},
@@ -219,8 +211,7 @@ async def upload_main_excel(archivo: UploadFile = File(...)):
 
     faltantes = [c for c in COLUMNAS_OBLIGATORIAS_MAIN if c not in df.columns]
     if faltantes:
-        if os.path.exists(file_location):
-            os.remove(file_location)
+        os.remove(file_location)
         return JSONResponse(
             status_code=400,
             content={
@@ -230,11 +221,8 @@ async def upload_main_excel(archivo: UploadFile = File(...)):
         )
 
     if df.dropna(how="all").empty:
-        if os.path.exists(file_location):
-            os.remove(file_location)
-        return JSONResponse(
-            status_code=400, content={"error": "El archivo no tiene filas de datos."}
-        )
+        os.remove(file_location)
+        return JSONResponse(status_code=400, content={"error": "El archivo no tiene filas de datos."})
 
     return {
         "mensaje": "Archivo validado y guardado",
@@ -242,20 +230,15 @@ async def upload_main_excel(archivo: UploadFile = File(...)):
         "filas": int(len(df.dropna(how="all"))),
     }
 
-
 @app.get("/api/dev/archivos-disponibles/")
 async def listar_archivos():
     archivos = [f for f in os.listdir(DB_DIR) if f.endswith(('.xlsx', '.xls', '.csv'))]
     return {"archivos": archivos}
 
-
 @app.post("/api/dev/upload-diccionario/")
 async def upload_diccionario(archivo: UploadFile = File(...)):
     if not archivo.filename.lower().endswith((".xlsx", ".xls")):
-        return JSONResponse(
-            status_code=400,
-            content={"error": "El archivo debe ser un Excel (.xlsx o .xls)."},
-        )
+        return JSONResponse(status_code=400, content={"error": "El archivo debe ser un Excel (.xlsx o .xls)."})
 
     file_location = os.path.join(DICCIONARIOS_DIR, archivo.filename)
     with open(file_location, "wb+") as file_object:
@@ -264,21 +247,14 @@ async def upload_diccionario(archivo: UploadFile = File(...)):
     try:
         df = _leer_un_diccionario(file_location)
     except Exception as e:
-        if os.path.exists(file_location):
-            os.remove(file_location)
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"No se pudo leer el Excel: {e}"},
-        )
+        os.remove(file_location)
+        return JSONResponse(status_code=400, content={"error": f"No se pudo leer el Excel: {e}"})
 
     if df.empty:
-        if os.path.exists(file_location):
-            os.remove(file_location)
+        os.remove(file_location)
         return JSONResponse(
             status_code=400,
-            content={
-                "error": "No se encontró una columna 'SKU' en el archivo, o no tiene filas de datos."
-            },
+            content={"error": "No se encontró una columna 'SKU' en el archivo, o no tiene filas de datos."},
         )
 
     for f in os.listdir(DICCIONARIOS_DIR):
@@ -297,11 +273,7 @@ async def upload_diccionario(archivo: UploadFile = File(...)):
 
 @app.get("/api/dev/diccionario-actual/")
 async def diccionario_actual():
-    archivos = [
-        f
-        for f in os.listdir(DICCIONARIOS_DIR)
-        if f.endswith((".xlsx", ".xls")) and not f.startswith("~")
-    ]
+    archivos = [f for f in os.listdir(DICCIONARIOS_DIR) if f.endswith(('.xlsx', '.xls')) and not f.startswith('~')]
     if not archivos:
         return {"archivo": None}
     return {"archivo": archivos[0]}
@@ -311,7 +283,7 @@ async def diccionario_actual():
 async def eliminar_diccionario():
     eliminados = 0
     for f in os.listdir(DICCIONARIOS_DIR):
-        if f.endswith((".xlsx", ".xls")) and not f.startswith("~"):
+        if f.endswith(('.xlsx', '.xls')) and not f.startswith('~'):
             os.remove(os.path.join(DICCIONARIOS_DIR, f))
             eliminados += 1
     return {"mensaje": "Diccionario eliminado", "archivos_eliminados": eliminados}
@@ -321,6 +293,7 @@ async def eliminar_diccionario():
 # ---------------------------------------------------------
 
 MAPEO_CATEGORIAS_ML = {
+    # --- CUIDADO FACIAL / SKINCARE ---
     "Cuidado Facial": [
         "crema", "cream", "moisturizer", "moisturising", "calming cream", "gel", "lotion", "locion",
         "serum", "sérum", "ampoule", "ampolla", "esencia", "essence", "pdrn", "exosomas", "treatment",
@@ -330,6 +303,8 @@ MAPEO_CATEGORIAS_ML = {
         "bloqueador", "protector solar", "sunscreen", "sun cream", "sun stick", "sunblock",
         "mascarilla", "sheet mask", "mask", "cuidado facial", "facial", "skincare"
     ],
+    
+    # --- MAQUILLAJE / MAKEUP ---
     "Maquillaje": [
         "rubor", "rubores", "blush", "cheek",
         "delineador", "eyeliner", "pen liner", "pencil liner", "tinta de ojos",
@@ -338,14 +313,20 @@ MAPEO_CATEGORIAS_ML = {
         "bb cream", "cc cream", "base de maquillaje", "foundation", "tone up", "cushion", "corrector", "concealer",
         "labial", "tint", "tinta de labios", "gloss", "bálsamo labial", "balsamo labial", "lip balm", "lipstick"
     ],
+
+    # --- CUIDADO CORPORAL / BODY CARE ---
     "Cuidado Corporal": [
         "loción corporal", "crema corporal", "jabón corporal", "body wash", 
         "body lotion", "body cream", "body scrub", "corporal", "body"
     ],
+    
+    # --- CUIDADO CAPILAR / HAIR CARE ---
     "Cuidado Capilar": [
         "shampoo", "champú", "acondicionador", "hair", "tratamiento capilar", 
         "mascarilla capilar", "aceite capilar", "scalp", "hair care"
     ],
+    
+    # --- HOGAR / HOME ---
     "Ambientadores y Difusores": [
         "ambientador", "ambientadores", "difusor", "difusores", 
         "home fragrance", "velas", "candle", "diffuser"
@@ -381,10 +362,12 @@ MAPEO_ML = {
 
 
 def _mapear_a_hoja_existente(nombre_categoria_detectada, lista_hojas):
+    # 1. Coincidencia directa o parcial de nombre
     for hoja in lista_hojas:
         if nombre_categoria_detectada.lower() in hoja.lower() or hoja.lower() in nombre_categoria_detectada.lower():
             return hoja
             
+    # 2. Búsqueda por palabras clave de la familia
     palabras_clave_hoja = {
         "Cuidado Facial": ["facial", "rostro", "skincare", "piel"],
         "Maquillaje": ["maquillaje", "makeup"],
@@ -397,6 +380,7 @@ def _mapear_a_hoja_existente(nombre_categoria_detectada, lista_hojas):
         if any(kw in hoja.lower() for kw in keywords_familia):
             return hoja
 
+    # 3. Respaldo a pestaña "Otros" si existe
     for hoja in lista_hojas:
         if "otro" in hoja.lower():
             return hoja
@@ -432,6 +416,7 @@ def procesar_mercado_libre(df_datos, archivo):
     if not hojas_categoria:
         return None, {"error": "La plantilla de Mercado Libre no tiene hojas reconocibles"}
 
+    # Agrupar filas del Main por la hoja de destino que les corresponde
     filas_por_hoja = {}
     for _, fila in df_datos.iterrows():
         hoja = _elegir_hoja_ml(fila, hojas_categoria)
@@ -440,6 +425,7 @@ def procesar_mercado_libre(df_datos, archivo):
     for hoja, filas in filas_por_hoja.items():
         ws = wb[hoja]
 
+        # 1. Ubicar en qué columna está cada encabezado que nos interesa
         col_indices = {}
         for col in range(1, ws.max_column + 1):
             val = ws.cell(row=FILA_HEADER_ML, column=col).value
@@ -456,6 +442,7 @@ def procesar_mercado_libre(df_datos, archivo):
                 if val in variantes:
                     col_indices.setdefault(col_main, col)
 
+        # 2. Inyectar los datos a partir de la primera fila libre real
         fila_actual = _fila_inicio_datos_ml(ws)
         for fila in filas:
             for col_main, col_dest in col_indices.items():
@@ -488,13 +475,17 @@ async def procesar_tienda(tienda_id: str, archivo: str):
     ruta_salida = ""
 
     try:
-        # MERCADO LIBRE
+        # =========================================================
+        # PROCESAMIENTO: MERCADO LIBRE
+        # =========================================================
         if tienda_id in ("ml", "mercadolibre"):
             ruta_salida, error = procesar_mercado_libre(df_datos, archivo)
             if error:
                 return error
 
-        # FALABELLA
+        # =========================================================
+        # PROCESAMIENTO: FALABELLA
+        # =========================================================
         elif tienda_id == "falabella":
             dir_falabella = os.path.join(PLANTILLAS_DIR, "falabella")
             archivos_fala = [f for f in os.listdir(dir_falabella) if f.endswith('.xlsx') and not f.startswith('~')]
@@ -524,8 +515,7 @@ async def procesar_tienda(tienda_id: str, archivo: str):
                 'Precio_Base_Final': 'PriceFalabella #52',
                 'Precio_Oferta_Final': 'SalePriceFalabella #18',
             }
-            if 'ISP' in df_datos.columns:
-                mapeo['ISP'] = 'ResolucionIsp #402'
+            if 'ISP' in df_datos.columns: mapeo['ISP'] = 'ResolucionIsp #402'
 
             col_indices = {}
             col_fecha_inicio_oferta = None
@@ -562,7 +552,9 @@ async def procesar_tienda(tienda_id: str, archivo: str):
             ruta_salida = os.path.join(DB_DIR, f"Falabella_Listo_{archivo}")
             wb.save(ruta_salida)
 
-        # RIPLEY
+        # =========================================================
+        # PROCESAMIENTO: RIPLEY
+        # =========================================================
         elif tienda_id == "ripley":
             dir_ripley = os.path.join(PLANTILLAS_DIR, "ripley")
             archivos_ripley = [f for f in os.listdir(dir_ripley) if f.endswith('.xlsx') and not f.startswith('~')]
@@ -588,8 +580,7 @@ async def procesar_tienda(tienda_id: str, archivo: str):
                 'Precio_Base_Final': 'Precio de la oferta',
                 'Precio_Oferta_Final': 'Precio de descuento',
             }
-            if 'ISP' in df_datos.columns:
-                mapeo['ISP'] = 'N° de Registro ISP'
+            if 'ISP' in df_datos.columns: mapeo['ISP'] = 'N° de Registro ISP'
             
             col_indices = {}
             col_fecha_inicio_desc = None
@@ -607,13 +598,11 @@ async def procesar_tienda(tienda_id: str, archivo: str):
                     for col_main, col_rips in mapeo.items():
                         if isinstance(col_rips, list):
                             if val in col_rips:
-                                if col_main not in col_indices:
-                                    col_indices[col_main] = []
+                                if col_main not in col_indices: col_indices[col_main] = []
                                 col_indices[col_main].append(col)
                         else:
                             if val == col_rips:
-                                if col_main not in col_indices:
-                                    col_indices[col_main] = []
+                                if col_main not in col_indices: col_indices[col_main] = []
                                 col_indices[col_main].append(col)
 
             fecha_inicio_desc, fecha_fin_desc = _rango_fecha_oferta_aleatorio()
@@ -635,7 +624,9 @@ async def procesar_tienda(tienda_id: str, archivo: str):
             ruta_salida = os.path.join(DB_DIR, f"Ripley_Listo_{archivo}")
             wb.save(ruta_salida)
 
-        # WOOCOMMERCE
+        # =========================================================
+        # PROCESAMIENTO: WOOCOMMERCE
+        # =========================================================
         elif tienda_id == "woocommerce":
             def col_o_vacio(nombre):
                 return df_datos[nombre] if nombre in df_datos.columns else ""
@@ -657,6 +648,7 @@ async def procesar_tienda(tienda_id: str, archivo: str):
 
     return FileResponse(path=ruta_salida, filename=os.path.basename(ruta_salida))
 
+
 # ---------------------------------------------------------
 # ALIAS /export/<canal>
 # ---------------------------------------------------------
@@ -668,18 +660,21 @@ TIENDA_ID_POR_CANAL = {
 }
 
 for _canal, _tienda_id in TIENDA_ID_POR_CANAL.items():
-    def _make_export(t_id):
+    def _make_export(tienda_id):
         async def _export(archivo: str):
-            return await procesar_tienda(t_id, archivo)
+            return await procesar_tienda(tienda_id, archivo)
         return _export
 
     _handler = _make_export(_tienda_id)
     app.get(f"/export/{_canal}")(_handler)
     app.post(f"/export/{_canal}")(_handler)
 
-# ---------------------------------------------------------
-# EJECUCIÓN (Ajustado para puerto de servidor Cloud)
-# ---------------------------------------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("kosmeticos_backend_api:app", host="0.0.0.0", port=port, reload=False)
+    # PORT lo entrega automáticamente el hosting (Render, Railway, etc.).
+    # Si no existe (estás corriendo en tu PC), usa 8000 como antes.
+    puerto = int(os.environ.get("PORT", 8000))
+    solo_local = puerto == 8000 and "PORT" not in os.environ
+    print("Iniciando Kosmeticos ETL...")
+    if solo_local:
+        webbrowser.open("http://127.0.0.1:8000")
+    uvicorn.run(app, host="0.0.0.0", port=puerto)

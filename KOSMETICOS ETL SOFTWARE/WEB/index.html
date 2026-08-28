@@ -133,7 +133,10 @@
     <div id="file-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden z-50 flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-2xl rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 border border-slate-100">
             <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-pink-50/50">
-                <h3 class="font-bold text-slate-800 flex items-center"><i data-lucide="database" class="w-5 h-5 mr-2 text-pink-500"></i> Seleccionar Archivo (Base de Datos)</h3>
+                <div>
+                    <h3 class="font-bold text-slate-800 flex items-center"><i data-lucide="database" class="w-5 h-5 mr-2 text-pink-500"></i> Archivos en el servidor</h3>
+                    <p class="text-xs text-slate-500 mt-1 ml-7">Esta lista incluye lo que haya subido cualquiera de los dos equipos</p>
+                </div>
                 <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 bg-white p-1.5 rounded-lg shadow-sm"><i data-lucide="x" class="w-5 h-5"></i></button>
             </div>
             <div class="p-4 border-b border-gray-100 bg-slate-50">
@@ -222,12 +225,18 @@
                         <p class="text-slate-400 text-sm">Selecciona la base de datos a procesar para generar los catálogos finales.</p>
                     </div>
                     <div class="flex flex-col sm:flex-row gap-4 w-full lg:w-auto">
-                        <button onclick="openModal()" class="flex-1 lg:flex-none flex items-center justify-center px-6 py-3.5 bg-slate-800 border border-slate-700 text-white font-medium rounded-xl hover:bg-slate-700 transition-all shadow-sm">
-                            <i data-lucide="cloud-cog" class="w-5 h-5 mr-2 text-pink-400"></i> Buscar en Servidor
-                        </button>
-                        <button onclick="document.getElementById('localDevInput').click()" class="flex-1 lg:flex-none flex items-center justify-center px-6 py-3.5 bg-pink-500 text-white font-medium rounded-xl hover:bg-pink-400 shadow-[0_0_20px_rgba(244,114,182,0.3)] hover:-translate-y-0.5 transition-all">
-                            <i data-lucide="laptop" class="w-5 h-5 mr-2"></i> Cargar Local
-                        </button>
+                        <div class="flex-1 lg:flex-none text-center">
+                            <button onclick="openModal()" class="w-full flex items-center justify-center px-6 py-3.5 bg-slate-800 border border-slate-700 text-white font-medium rounded-xl hover:bg-slate-700 transition-all shadow-sm">
+                                <i data-lucide="cloud-cog" class="w-5 h-5 mr-2 text-pink-400"></i> Buscar en Servidor
+                            </button>
+                            <p class="text-[11px] text-slate-500 mt-1.5">Ver y buscar por nombre lo que subió cualquier persona (Marketing u otra oficina)</p>
+                        </div>
+                        <div class="flex-1 lg:flex-none text-center">
+                            <button onclick="document.getElementById('localDevInput').click()" class="w-full flex items-center justify-center px-6 py-3.5 bg-pink-500 text-white font-medium rounded-xl hover:bg-pink-400 shadow-[0_0_20px_rgba(244,114,182,0.3)] hover:-translate-y-0.5 transition-all">
+                                <i data-lucide="laptop" class="w-5 h-5 mr-2"></i> Subir desde mi PC
+                            </button>
+                            <p class="text-[11px] text-slate-500 mt-1.5">Sube un Excel nuevo directo desde tu computador (también quedará en el servidor para todos)</p>
+                        </div>
                         <input id="localDevInput" type="file" class="hidden" accept=".xlsx, .xls" onchange="uploadLocalDevFile(this)" />
                     </div>
                 </div>
@@ -310,7 +319,11 @@
         lucide.createIcons();
         
         // ESTRICTA LÓGICA DE BACKEND (INDEX ORIGINAL)
-        const API_URL = "http://localhost:8000/api";
+        // Antes esto estaba fijo en "http://localhost:8000/api", por lo que
+        // nunca hubiera funcionado fuera de tu PC. Ahora se arma solo con el
+        // mismo dominio donde está corriendo la página (sirve en local Y una
+        // vez desplegado en internet, sin tocar nada).
+        const API_URL = `${window.location.origin}/api`;
         let archivoActual = null;
         let todosLosArchivos = [];
 
