@@ -2,7 +2,7 @@ import os
 import re
 import random
 import shutil
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import pandas as pd
 from openpyxl import load_workbook
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status
@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import uvicorn
+from jose import JWTError, jwt
 
 # ---------------------------------------------------------
 # AUTENTICACIÓN Y CREDENCIALES (AGREGADO PARA LA NUBE)
@@ -19,6 +20,41 @@ USER_CREDENTIALS = {
     "marketing": "kosmeticos2026",  # Usuario/Clave Equipo 1
     "devweb": "kosmeticos2026"     # Usuario/Clave Equipo 2
 }
+
+# Configuración JWT
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "kosmeticos_super_secret_jwt_key_2026_cloud")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 12  # 12 Horas de duración del token
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+
+def crear_access_token(data: dict, expires_delta: timedelta = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+async def obtener_usuario_actual(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="No se pudieron validar las credenciales de autenticación",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None or username not in USER_CREDENTIALS:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    return username
+
 
 # Columnas mínimas que la Plantilla Madre debe traer
 COLUMNAS_OBLIGATORIAS_MAIN = [
@@ -47,7 +83,7 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
-# ENDPOINT DE LOGIN
+# ENDPOINT DE LOGIN Y SESIÓN JWT
 # ---------------------------------------------------------
 @app.post("/api/auth/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -58,7 +94,17 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
             detail="Usuario o contraseña incorrectos",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return {"access_token": form_data.username, "token_type": "bearer"}
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = crear_access_token(
+        data={"sub": form_data.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer", "username": form_data.username}
+
+
+@app.get("/api/auth/me")
+async def read_users_me(current_user: str = Depends(obtener_usuario_actual)):
+    return {"username": current_user, "status": "authenticated"}
 
 # ---------------------------------------------------------
 # DICCIONARIO DE PRECIOS
@@ -186,7 +232,7 @@ async def serve_frontend():
 
 
 @app.get("/api/marketing/download-template/")
-async def download_template():
+async def download_template(current_user: str = Depends(obtener_usuario_actual)):
     nombre_archivo = "plantilla madre.xlsx"
     file_path = os.path.join(PLANTILLAS_DIR, nombre_archivo)
     if not os.path.exists(file_path):
@@ -195,7 +241,10 @@ async def download_template():
 
 
 @app.post("/api/marketing/upload-excel/")
-async def upload_main_excel(archivo: UploadFile = File(...)):
+async def upload_main_excel(
+    archivo: UploadFile = File(...),
+    current_user: str = Depends(obtener_usuario_actual)
+):
     if not archivo.filename.lower().endswith((".xlsx", ".xls")):
         return JSONResponse(
             status_code=400,
@@ -244,13 +293,16 @@ async def upload_main_excel(archivo: UploadFile = File(...)):
 
 
 @app.get("/api/dev/archivos-disponibles/")
-async def listar_archivos():
+async def listar_archivos(current_user: str = Depends(obtener_usuario_actual)):
     archivos = [f for f in os.listdir(DB_DIR) if f.endswith(('.xlsx', '.xls', '.csv'))]
     return {"archivos": archivos}
 
 
 @app.post("/api/dev/upload-diccionario/")
-async def upload_diccionario(archivo: UploadFile = File(...)):
+async def upload_diccionario(
+    archivo: UploadFile = File(...),
+    current_user: str = Depends(obtener_usuario_actual)
+):
     if not archivo.filename.lower().endswith((".xlsx", ".xls")):
         return JSONResponse(
             status_code=400,
@@ -296,7 +348,7 @@ async def upload_diccionario(archivo: UploadFile = File(...)):
 
 
 @app.get("/api/dev/diccionario-actual/")
-async def diccionario_actual():
+async def diccionario_actual(current_user: str = Depends(obtener_usuario_actual)):
     archivos = [
         f
         for f in os.listdir(DICCIONARIOS_DIR)
@@ -308,7 +360,7 @@ async def diccionario_actual():
 
 
 @app.delete("/api/dev/eliminar-diccionario/")
-async def eliminar_diccionario():
+async def eliminar_diccionario(current_user: str = Depends(obtener_usuario_actual)):
     eliminados = 0
     for f in os.listdir(DICCIONARIOS_DIR):
         if f.endswith((".xlsx", ".xls")) and not f.startswith("~"):
@@ -474,7 +526,11 @@ def procesar_mercado_libre(df_datos, archivo):
 # MOTOR DE INYECCIÓN INTELIGENTE
 # ---------------------------------------------------------
 @app.get("/api/dev/procesar-tienda/{tienda_id}")
-async def procesar_tienda(tienda_id: str, archivo: str):
+async def procesar_tienda(
+    tienda_id: str, 
+    archivo: str,
+    current_user: str = Depends(obtener_usuario_actual)
+):
     file_path = os.path.join(DB_DIR, archivo)
     if not os.path.exists(file_path):
         return {"error": "El archivo no existe en la BD"}
@@ -669,8 +725,8 @@ TIENDA_ID_POR_CANAL = {
 
 for _canal, _tienda_id in TIENDA_ID_POR_CANAL.items():
     def _make_export(t_id):
-        async def _export(archivo: str):
-            return await procesar_tienda(t_id, archivo)
+        async def _export(archivo: str, current_user: str = Depends(obtener_usuario_actual)):
+            return await procesar_tienda(t_id, archivo, current_user)
         return _export
 
     _handler = _make_export(_tienda_id)
