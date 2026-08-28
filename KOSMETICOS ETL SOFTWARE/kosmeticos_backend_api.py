@@ -223,15 +223,27 @@ def _rango_fecha_oferta_aleatorio():
 # ---------------------------------------------------------
 # RUTAS DEL FRONTEND Y ARCHIVOS
 # ---------------------------------------------------------
-app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+if os.path.exists(WEB_DIR):
+    app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
+# Entrega la interfaz visual de LOGIN (login.html) al ingresar a / o a /login
 @app.get("/", response_class=HTMLResponse)
-async def serve_frontend():
-    index_path = os.path.join(WEB_DIR, "index.html")
-    if os.path.exists(index_path):
-        with open(index_path, "r", encoding="utf-8") as f:
+@app.get("/login", response_class=HTMLResponse)
+async def serve_login():
+    login_path = os.path.join(WEB_DIR, "login.html")
+    if os.path.exists(login_path):
+        with open(login_path, "r", encoding="utf-8") as f:
             return f.read()
-    return "<h1>El archivo index.html no se encuentra en la carpeta /WEB</h1>"
+    return "<h2>No se encontró el archivo login.html en la carpeta WEB</h2>"
+
+# Entrega el panel principal (index.html) tras iniciar sesión
+@app.get("/dashboard", response_class=HTMLResponse)
+async def serve_dashboard():
+    dashboard_path = os.path.join(WEB_DIR, "index.html")
+    if os.path.exists(dashboard_path):
+        with open(dashboard_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h2>No se encontró el archivo index.html en la carpeta WEB</h2>"
 
 
 @app.get("/api/marketing/download-template/")

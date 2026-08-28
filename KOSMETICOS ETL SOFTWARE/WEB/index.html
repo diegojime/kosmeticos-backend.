@@ -636,7 +636,7 @@
                 
                 const enlaceTemporal = document.createElement('a');
                 enlaceTemporal.href = urlDescarga;
-                enlaceTemporal.download = `Catalogo_${tienda.toUpperCase()}.xlsx`; 
+                enlaceTemporal.download = `Catalogo_${tienda.toUpperCase()}.xlsx`;
                 document.body.appendChild(enlaceTemporal);
                 enlaceTemporal.click();
                 document.body.removeChild(enlaceTemporal);
