@@ -305,15 +305,12 @@
 
     </main>
 
-    <!-- SCRIPTS DE LÓGICA (Vanilla JS + Fetch Dinámico) -->
+    <!-- SCRIPTS DE LÓGICA (Vanilla JS + Fetch Originales) -->
     <script>
         lucide.createIcons();
         
-        // DETECCIÓN DINÁMICA DE BACKEND (Funciona en localhost y en Render)
-        const API_URL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-            ? "http://localhost:8000/api"
-            : `${window.location.origin}/api`;
-
+        // ESTRICTA LÓGICA DE BACKEND (INDEX ORIGINAL)
+        const API_URL = "http://localhost:8000/api";
         let archivoActual = null;
         let todosLosArchivos = [];
 
@@ -435,6 +432,7 @@
             lucide.createIcons();
             
             try {
+                // Fetch Original Index
                 const response = await fetch(`${API_URL}/dev/archivos-disponibles/`);
                 const data = await response.json();
                 todosLosArchivos = data.archivos;
@@ -443,7 +441,7 @@
                 document.getElementById('file-list-container').innerHTML = `
                     <div class="flex flex-col items-center justify-center py-12 text-red-500">
                         <i data-lucide="wifi-off" class="w-10 h-10 mb-3 opacity-50"></i>
-                        <p class="font-medium">Error de conexión con el servidor</p>
+                        <p class="font-medium">Error de conexión con el servidor local</p>
                     </div>`;
                 lucide.createIcons();
             }
@@ -498,6 +496,7 @@
             formData.append("archivo", file);
             try {
                 showToast(`Subiendo ${file.name}...`, "info");
+                // Fetch Original Index
                 const res = await fetch(`${API_URL}/marketing/upload-excel/`, { method: 'POST', body: formData });
                 if(res.ok) showToast("Guardado en Base de Datos exitosamente.", "success");
                 else showToast("Error del servidor.", "error");
@@ -512,6 +511,7 @@
             formData.append("archivo", file);
             try {
                 showToast(`Cargando diccionario...`, "info");
+                // Fetch Original Index
                 const res = await fetch(`${API_URL}/dev/upload-diccionario/`, { method: 'POST', body: formData });
                 if(res.ok) {
                     showToast("Diccionario actualizado correctamente.", "success");
@@ -563,6 +563,7 @@
             formData.append("archivo", file);
             try {
                 showToast(`Actualizando pesos y medidas...`, "info");
+                // Fetch Original Index
                 const res = await fetch(`${API_URL}/dev/upload-peso/`, { method: 'POST', body: formData });
                 if(res.ok) {
                     showToast("Medidas y pesos actualizados correctamente.", "success");
@@ -579,6 +580,7 @@
             formData.append("archivo", file);
             try {
                 showToast(`Cargando ${file.name} desde tu equipo...`, "info");
+                // Fetch Original Index
                 const response = await fetch(`${API_URL}/marketing/upload-excel/`, { method: 'POST', body: formData });
                 if(response.ok) {
                     showToast("Archivo cargado y listo para procesar.", "success");
@@ -598,6 +600,7 @@
             }
             showToast(`Generando catálogo para ${tienda.toUpperCase()}...`, "info");
             try {
+                // Fetch Original Index (Construcción del Enlace de Descarga)
                 const urlDescarga = `${API_URL}/dev/procesar-tienda/${tienda}?archivo=${encodeURIComponent(archivoActual)}`;
                 const enlaceTemporal = document.createElement('a');
                 enlaceTemporal.href = urlDescarga;
